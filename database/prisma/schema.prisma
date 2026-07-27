@@ -1,0 +1,563 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum UserRole {
+  USER
+  ADMIN
+  MODERATOR
+  SUPPORT
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum GameType {
+  CHESS
+  QUIZ
+  CARROM
+  ESPORTS
+  SKILL_CHALLENGE
+}
+
+enum GameStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum MatchStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DRAW
+}
+
+enum MatchOutcome {
+  WIN
+  LOSS
+  DRAW
+  CANCELLED
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  GAME_ENTRY
+  GAME_REWARD
+  REFERRAL_BONUS
+  ACHIEVEMENT_REWARD
+  ADMIN_ADJUSTMENT
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum TournamentStatus {
+  DRAFT
+  REGISTRATION_OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum NotificationType {
+  MATCH_INVITATION
+  MATCH_UPDATE
+  ACHIEVEMENT_UNLOCKED
+  REWARD_RECEIVED
+  LEADERBOARD_UPDATE
+  REFERRAL_JOINED
+  SYSTEM_ANNOUNCEMENT
+  SUPPORT_RESPONSE
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  REOPENED
+}
+
+enum SupportTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+// ============================================
+// USER & AUTHENTICATION
+// ============================================
+
+model User {
+  id                    String                @id @default(cuid())
+  email                 String                @unique
+  phone                 String?               @unique
+  password              String
+  firstName             String
+  lastName              String
+  avatar                String?
+  bio                   String?
+  role                  UserRole              @default(USER)
+  status                UserStatus            @default(ACTIVE)
+  emailVerified         DateTime?
+  phoneVerified         DateTime?
+  lastLogin             DateTime?
+  totalGamesPlayed      Int                   @default(0)
+  totalWins             Int                   @default(0)
+  totalLosses           Int                   @default(0)
+  totalDraws            Int                   @default(0)
+  winRate               Float                 @default(0)
+  rating                Int                   @default(1000)
+  
+  // Relations
+  wallet                Wallet?
+  walletTransactions    WalletTransaction[]
+  referredBy            User?                 @relation("Referrals", fields: [referredById], references: [id])
+  referredById          String?
+  referrals             User[]                @relation("Referrals")
+  referralRecord        Referral?             @relation("ReferralUser")
+  referralBonuses       Referral[]            @relation("ReferralReferrer")
+  matchesAsPlayer1      Match[]               @relation("Player1")
+  matchesAsPlayer2      Match[]               @relation("Player2")
+  matchPlayers          MatchPlayer[]
+  leaderboardEntries    Leaderboard[]
+  achievements          Achievement[]         @relation("UserAchievements")
+  notifications         Notification[]
+  supportTickets        SupportTicket[]
+  auditLogs             AuditLog[]
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  @@index([email])
+  @@index([phone])
+  @@index([status])
+  @@index([role])
+}
+
+model UserSession {
+  id                    String                @id @default(cuid())
+  userId                String
+  deviceInfo            String?
+  ipAddress             String?
+  userAgent             String?
+  refreshToken          String                @unique
+  expiresAt             DateTime
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([userId])
+  @@index([refreshToken])
+}
+
+// ============================================
+// WALLET & TRANSACTIONS
+// ============================================
+
+model Wallet {
+  id                    String                @id @default(cuid())
+  userId                String                @unique
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance               Decimal               @default(1000) // Demo credits
+  totalDeposited        Decimal               @default(0)
+  totalWithdrawn        Decimal               @default(0)
+  totalSpent            Decimal               @default(0)
+  totalEarned           Decimal               @default(0)
+  lastTransactionAt     DateTime?
+  
+  transactions          WalletTransaction[]
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([userId])
+}
+
+model WalletTransaction {
+  id                    String                @id @default(cuid())
+  userId                String
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  walletId              String
+  wallet                Wallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  
+  type                  TransactionType
+  amount                Decimal
+  status                TransactionStatus     @default(PENDING)
+  description           String?
+  
+  // Relation to match if transaction is game-related
+  matchId               String?
+  match                 Match?                @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  
+  // Relation to referral if transaction is referral bonus
+  referralId            String?
+  referral              Referral?             @relation(fields: [referralId], references: [id], onDelete: SetNull)
+  
+  balanceBefore         Decimal
+  balanceAfter          Decimal
+  
+  metadata              Json?
+  auditLog              String?
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([userId])
+  @@index([walletId])
+  @@index([type])
+  @@index([status])
+  @@index([matchId])
+  @@index([createdAt])
+}
+
+// ============================================
+// GAMES & MATCHES
+// ============================================
+
+model Game {
+  id                    String                @id @default(cuid())
+  name                  String                @unique
+  type                  GameType
+  description           String?
+  rules                 String?
+  icon                  String?
+  coverImage            String?
+  
+  minPlayers            Int                   @default(2)
+  maxPlayers            Int                   @default(2)
+  baseEntryFee          Decimal               @default(100)
+  
+  // Game settings
+  timeLimit             Int?                  // in seconds
+  minRating             Int                   @default(0)
+  maxRating             Int?
+  allowSpectators       Boolean               @default(true)
+  
+  status                GameStatus            @default(ACTIVE)
+  
+  // Statistics
+  totalMatches          Int                   @default(0)
+  totalPlayers          Int                   @default(0)
+  totalPrizePool        Decimal               @default(0)
+  
+  matches               Match[]
+  matchPlayers          MatchPlayer[]
+  leaderboards          Leaderboard[]
+  tournaments           Tournament[]
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([type])
+  @@index([status])
+}
+
+model Match {
+  id                    String                @id @default(cuid())
+  gameId                String
+  game                  Game                  @relation(fields: [gameId], references: [id])
+  
+  player1Id            String
+  player1              User                  @relation("Player1", fields: [player1Id], references: [id])
+  
+  player2Id            String
+  player2              User                  @relation("Player2", fields: [player2Id], references: [id])
+  
+  status                MatchStatus
+  outcome               MatchOutcome?
+  winnerId              String?
+  
+  entryFee              Decimal
+  prizePool             Decimal
+  winnersReward         Decimal?
+  losersReward          Decimal?
+  
+  startedAt             DateTime?
+  endedAt               DateTime?
+  
+  // Match data
+  duration              Int?                  // in seconds
+  matchData             Json?                 // Game-specific data (moves, answers, etc.)
+  
+  // Ratings change
+  player1RatingBefore   Int?
+  player1RatingAfter    Int?
+  player2RatingBefore   Int?
+  player2RatingAfter    Int?
+  
+  matchPlayers          MatchPlayer[]
+  walletTransactions    WalletTransaction[]
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([gameId])
+  @@index([player1Id])
+  @@index([player2Id])
+  @@index([status])
+  @@index([winnerId])
+  @@index([createdAt])
+}
+
+model MatchPlayer {
+  id                    String                @id @default(cuid())
+  matchId               String
+  match                 Match                 @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  
+  userId                String
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  gameId                String
+  game                  Game                  @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  
+  placement             Int?                  // 1st, 2nd, etc.
+  score                 Int                   @default(0)
+  status                MatchOutcome
+  
+  joinedAt              DateTime              @default(now())
+  leftAt                DateTime?
+  
+  statistics            Json?                 // Game-specific statistics
+
+  @@unique([matchId, userId])
+  @@index([userId])
+  @@index([gameId])
+}
+
+// ============================================
+// TOURNAMENTS
+// ============================================
+
+model Tournament {
+  id                    String                @id @default(cuid())
+  gameId                String
+  game                  Game                  @relation(fields: [gameId], references: [id])
+  
+  name                  String
+  description           String?
+  
+  status                TournamentStatus      @default(DRAFT)
+  
+  entryFee              Decimal
+  prizePool             Decimal
+  
+  maxParticipants       Int
+  minRating             Int                   @default(0)
+  
+  registrationStartsAt  DateTime
+  registrationEndsAt    DateTime
+  startsAt              DateTime
+  endsAt                DateTime?
+  
+  totalMatches          Int                   @default(0)
+  totalParticipants     Int                   @default(0)
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([gameId])
+  @@index([status])
+  @@index([startsAt])
+}
+
+// ============================================
+// LEADERBOARDS
+// ============================================
+
+model Leaderboard {
+  id                    String                @id @default(cuid())
+  userId                String
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  gameId                String
+  game                  Game                  @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  
+  rank                  Int
+  rating                Int
+  wins                  Int                   @default(0)
+  losses                Int                   @default(0)
+  draws                 Int                   @default(0)
+  winRate               Float                 @default(0)
+  totalMatches          Int                   @default(0)
+  totalPrizeEarned      Decimal               @default(0)
+  
+  season                Int                   @default(1)
+  
+  updatedAt             DateTime              @updatedAt
+
+  @@unique([userId, gameId, season])
+  @@index([gameId])
+  @@index([rank])
+  @@index([rating])
+}
+
+// ============================================
+// REFERRALS & ACHIEVEMENTS
+// ============================================
+
+model Referral {
+  id                    String                @id @default(cuid())
+  userId                String
+  user                  User                  @relation("ReferralUser", fields: [userId], references: [id], onDelete: Cascade)
+  
+  referrerId            String
+  referrer              User                  @relation("ReferralReferrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  
+  bonusAmount           Decimal
+  status                TransactionStatus     @default(PENDING)
+  
+  walletTransactions    WalletTransaction[]
+  
+  createdAt             DateTime              @default(now())
+  completedAt           DateTime?
+
+  @@unique([userId, referrerId])
+  @@index([userId])
+  @@index([referrerId])
+}
+
+model Achievement {
+  id                    String                @id @default(cuid())
+  userId                String
+  user                  User                  @relation("UserAchievements", fields: [userId], references: [id], onDelete: Cascade)
+  
+  title                 String
+  description           String?
+  icon                  String?
+  
+  // Achievement categories
+  type                  String                // e.g., "milestone", "skill", "social", "explorer"
+  rarity                String                @default("common") // common, uncommon, rare, epic, legendary
+  
+  // Reward
+  rewardAmount          Decimal               @default(0)
+  
+  // Progress
+  progress              Int                   @default(0)
+  requirement           Int
+  
+  isUnlocked            Boolean               @default(false)
+  unlockedAt            DateTime?
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([userId])
+  @@index([type])
+  @@index([isUnlocked])
+}
+
+// ============================================
+// NOTIFICATIONS
+// ============================================
+
+model Notification {
+  id                    String                @id @default(cuid())
+  userId                String
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type                  NotificationType
+  title                 String
+  message               String
+  
+  data                  Json?
+  
+  isRead                Boolean               @default(false)
+  readAt                DateTime?
+  
+  createdAt             DateTime              @default(now())
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+// ============================================
+// SUPPORT & ADMIN
+// ============================================
+
+model SupportTicket {
+  id                    String                @id @default(cuid())
+  userId                String
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title                 String
+  description           String
+  category              String
+  
+  status                SupportTicketStatus   @default(OPEN)
+  priority              SupportTicketPriority @default(MEDIUM)
+  
+  resolution            String?
+  resolvedAt            DateTime?
+  
+  attachments           String[]              // JSON array of file URLs
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([priority])
+}
+
+model AuditLog {
+  id                    String                @id @default(cuid())
+  userId                String
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  action                String
+  resource              String
+  resourceId            String
+  
+  changes               Json?
+  reason                String?
+  ipAddress             String?
+  userAgent             String?
+  
+  createdAt             DateTime              @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
+}
+
+model SystemLog {
+  id                    String                @id @default(cuid())
+  level                 String                // INFO, WARN, ERROR, DEBUG
+  service               String
+  message               String
+  metadata              Json?
+  createdAt             DateTime              @default(now())
+
+  @@index([level])
+  @@index([service])
+  @@index([createdAt])
+}
