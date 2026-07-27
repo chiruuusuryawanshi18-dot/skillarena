@@ -1,0 +1,27 @@
+{
+  "name": "skillarena",
+  "version": "1.0.0",
+  "description": "SkillArena - Skill-Based Gaming Platform",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "services/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev": "npm run dev --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspaces",
+    "format": "npm run format --workspaces",
+    "db:migrate": "cd database && npx prisma migrate dev",
+    "db:push": "cd database && npx prisma db push",
+    "db:seed": "cd database && npx prisma db seed",
+    "db:studio": "cd database && npx prisma studio",
+    "db:reset": "cd database && npx prisma migrate reset"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "prettier": "^3.0.0",
+    "typescript": "^5.2.0"
+  }
+}
